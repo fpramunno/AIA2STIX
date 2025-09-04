@@ -1,0 +1,17 @@
+*.ckpt
+*.pt
+checkpoints/
+outputs/
+*.err
+model_cond_generation/
+model_cond_generation_batch32/
+wandb/
+# WandB and logs
+wandb/
+*.log
+*.out
+*.txt
+*.json
+*.csv
+*.pth
+*.npy
