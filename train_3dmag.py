@@ -90,8 +90,8 @@ def main():
                 help='the checkpoint to resume from')
     p.add_argument('--resume-inference', type=str,
                 help='the inference checkpoint to resume from')
-    p.add_argument('--save-every', type=int, default=10000,
-                help='save every this many steps')
+    p.add_argument('--save-every', type=int, default=5,
+                help='save every this many epochs')
     p.add_argument('--seed', type=int,
                 help='the random seed')
     p.add_argument('--start-method', type=str, default='spawn',
@@ -343,7 +343,7 @@ def main():
 
     def save():
         accelerator.wait_for_everyone()
-        filename = os.path.join(args.saving_path, dir_path_mdl, f"{args.name}_{step:08}.pth") 
+        filename = os.path.join(args.saving_path, dir_path_mdl, f"{args.name}_epoch_{epoch:04d}.pth") 
         if accelerator.is_main_process:
             tqdm.write(f'Saving to {filename}...')
         inner_model = unwrap(model.inner_model)
@@ -604,7 +604,11 @@ def main():
                 
                 wandb.log(log_dict)
                 plt.close()
-            save()
+            
+            # Save model every N epochs instead of every epoch
+            if epoch % args.save_every == 0:
+                save()
+                
             epoch += 1  # Move to the next epoch
             
             # Check if we've reached the maximum number of epochs
