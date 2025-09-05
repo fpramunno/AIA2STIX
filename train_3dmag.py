@@ -60,10 +60,28 @@ def main():
                 help='the configuration file')
     p.add_argument('--data-path', type=str, default="/mnt/nas05/astrodata01/aia_2_stix/prepro_data_20250731_210359/processed_images",
                 help='the path of the dataset')
+    p.add_argument('--data-path-encoded', type=str, default="/mnt/nas05/astrodata01/aia_2_stix/prepro_data_20250731_210359/processed_images",
+                help='the path of the dataset encoded by BOT3')
     p.add_argument('--saving-path', type=str, default="/mnt/nas05/data01/francesco/AIA2STIX/", 
                 help='the path where to save the model')
     p.add_argument('--dir-name', type=str, default='aia_2_stix_v1',
-                help='the directory name to use')  # <---- Added this line
+                help='the directory name to use')
+    p.add_argument('--train-vis-path', type=str, default=None,
+                help='path to visibility CSV for training data (None for augmented datasets)')
+    p.add_argument('--train-data-path', type=str, default=None,
+                help='path to training dataset (overrides --data-path if provided)')
+    p.add_argument('--train-use-augmented', action='store_true',
+                help='use augmented format for training dataset')
+    p.add_argument('--val-vis-path', type=str, default="/mnt/nas05/data01/francesco/AIA2STIX/Flarelist_visibilites.csv",
+                help='path to visibility CSV for validation data')
+    p.add_argument('--val-data-path', type=str, default=None,
+                help='path to validation dataset (overrides --data-path if provided)')
+    p.add_argument('--val-enc-data-path', type=str, default="/mnt/nas05/astrodata01/aia_2_stix/encoded_data/",
+                help='path to validation encoded data')
+    p.add_argument('--val-use-augmented', action='store_true',
+                help='use augmented format for validation dataset')
+    p.add_argument('--date-ranges', type=str, nargs='*',
+                help='date ranges in format: train 210520 210630 valid 210701 210730')
     p.add_argument('--end-step', type=int, default=None,
                 help='the step to end training at')
     p.add_argument('--max-epochs', type=int, default=None,
@@ -90,8 +108,8 @@ def main():
                 help='the checkpoint to resume from')
     p.add_argument('--resume-inference', type=str,
                 help='the inference checkpoint to resume from')
-    p.add_argument('--save-every', type=int, default=10000,
-                help='save every this many steps')
+    p.add_argument('--save-every', type=int, default=5,
+                help='save every this many epochs')
     p.add_argument('--seed', type=int,
                 help='the random seed')
     p.add_argument('--start-method', type=str, default='spawn',
@@ -112,6 +130,19 @@ def main():
                 help='the wandb run name')
 
     args = p.parse_args()
+
+    # Parse date ranges if provided
+    date_ranges = None
+    if args.date_ranges and len(args.date_ranges) >= 3:
+        date_ranges = {}
+        i = 0
+        while i < len(args.date_ranges) - 2:
+            split_name = args.date_ranges[i]
+            start_date = args.date_ranges[i + 1]
+            end_date = args.date_ranges[i + 2]
+            date_ranges[split_name] = (start_date, end_date)
+            i += 3
+        print(f"Using date ranges: {date_ranges}")
 
     dir_path_res = os.path.join(args.saving_path, f"results_{args.dir_name}")
     dir_path_mdl = os.path.join(args.saving_path, f"model_{args.dir_name}")
@@ -251,28 +282,31 @@ def main():
     ema_stats = {}
 
     # Load the dataset
-
     train_dataset, train_sampler, train_dl = get_aia2stix_data_objects(
-        vis_path="/mnt/nas05/data01/francesco/AIA2STIX/Flarelist_visibilites.csv",
-        data_path="/mnt/nas05/astrodata01/aia_2_stix/prepro_data_20250731_210359/processed_images",
-        batch_size=args.batch_size,
-        distributed=False,
-        num_data_workers=args.num_workers,
-        split='train',
-        seed=42,
-        enc_data_path="/mnt/nas05/astrodata01/aia_2_stix/encoded_data/"
-    )
+            vis_path=args.train_vis_path,
+            data_path=args.train_data_path if args.train_data_path else args.data_path,
+            batch_size=args.batch_size,
+            distributed=False,
+            num_data_workers=args.num_workers,
+            split='train',
+            seed=42,
+            enc_data_path=args.data_path_encoded,
+            use_augmented=args.train_use_augmented,
+            date_ranges=date_ranges
+        )
 
     val_dataset, val_sampler, val_dl = get_aia2stix_data_objects(
-        vis_path="/mnt/nas05/data01/francesco/AIA2STIX/Flarelist_visibilites.csv",
-        data_path="/mnt/nas05/astrodata01/aia_2_stix/prepro_data_20250731_210359/processed_images",
-        batch_size=args.batch_size,
-        distributed=False,
-        num_data_workers=args.num_workers,
-        split='valid',
-        seed=42,
-        enc_data_path="/mnt/nas05/astrodata01/aia_2_stix/encoded_data/"
-    )
+            vis_path=args.val_vis_path,
+            data_path=args.val_data_path if args.val_data_path else args.data_path,
+            batch_size=args.batch_size,
+            distributed=False,
+            num_data_workers=args.num_workers,
+            split='valid',
+            seed=42,
+            enc_data_path=args.val_enc_data_path,
+            use_augmented=args.val_use_augmented,
+            date_ranges=date_ranges
+        )
 
     print('Train loader and Valid loader are up!')
 
@@ -343,7 +377,7 @@ def main():
 
     def save():
         accelerator.wait_for_everyone()
-        filename = os.path.join(args.saving_path, dir_path_mdl, f"{args.name}_{step:08}.pth") 
+        filename = os.path.join(args.saving_path, dir_path_mdl, f"{args.name}_epoch_{epoch:04d}.pth") 
         if accelerator.is_main_process:
             tqdm.write(f'Saving to {filename}...')
         inner_model = unwrap(model.inner_model)
@@ -604,7 +638,11 @@ def main():
                 
                 wandb.log(log_dict)
                 plt.close()
-            save()
+            
+            # Save model every N epochs instead of every epoch
+            if epoch % args.save_every == 0:
+                save()
+                
             epoch += 1  # Move to the next epoch
             
             # Check if we've reached the maximum number of epochs

@@ -108,9 +108,6 @@ def encode_dataset(model, dataloader, device, split_name, output_dir):
         file_path = split_dir / filename
         np.save(file_path, features)
     
-    # Also save a single concatenated file
-    concat_file = split_dir / f"{split_name}_encoded_features.npy"
-    np.save(concat_file, all_features)
     
     print(f"Saved {len(filenames)} individual files and concatenated file to {split_dir}")
     
@@ -123,10 +120,10 @@ def main():
                         help='Path to the model checkpoint file (.pth)')
     parser.add_argument('--data-path', type=str,
                         default="/mnt/nas05/astrodata01/aia_2_stix/prepro_data_20250731_210359/processed_images",
-                        help='Path to the AIA processed images')
+                        help='Path to AIA processed images OR augmented dataset directory (use with --use-augmented)')
     parser.add_argument('--vis-path', type=str,
                         default="/mnt/nas05/data01/francesco/AIA2STIX/Flarelist_visibilites.csv",
-                        help='Path to the visibility data CSV')
+                        help='Path to the visibility data CSV (ignored if --use-augmented is set)')
     parser.add_argument('--output-dir', type=str, required=True,
                         help='Directory to save encoded features')
     parser.add_argument('--batch-size', type=int, default=16,
@@ -138,6 +135,10 @@ def main():
     parser.add_argument('--encode-splits', nargs='+', default=['train', 'valid'],
                         choices=['train', 'valid', 'test'],
                         help='Which data splits to encode')
+    parser.add_argument('--use-augmented', action='store_true',
+                        help='Use augmented dataset format (data-path should point to augmented dataset directory)')
+    parser.add_argument('--date-ranges', type=str, nargs='*',
+                        help='Date ranges in format: train 210520 210630 valid 210701 210730 (for augmented datasets)')
     
     args = parser.parse_args()
     
@@ -148,6 +149,27 @@ def main():
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Parse date ranges if provided
+    date_ranges = None
+    if args.date_ranges and len(args.date_ranges) >= 3:
+        date_ranges = {}
+        i = 0
+        while i < len(args.date_ranges) - 2:
+            split_name = args.date_ranges[i]
+            start_date = args.date_ranges[i + 1]
+            end_date = args.date_ranges[i + 2]
+            date_ranges[split_name] = (start_date, end_date)
+            i += 3
+        print(f"Using date ranges: {date_ranges}")
+    
+    # Print dataset configuration
+    if args.use_augmented:
+        print(f"Using AUGMENTED dataset from: {args.data_path}")
+        print("Note: --vis-path will be ignored for augmented datasets")
+    else:
+        print(f"Using ORIGINAL dataset from: {args.data_path}")
+        print(f"Visibility data from: {args.vis_path}")
     
     # Load model
     print(f"Loading model from {args.checkpoint_path}")
@@ -185,14 +207,16 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Load dataset
-        dataset, sampler, dataloader = get_aia2stix_data_objects(
-            vis_path=args.vis_path,
+        dataset, _, dataloader = get_aia2stix_data_objects(
+            vis_path=None if args.use_augmented else args.vis_path,
             data_path=args.data_path,
             batch_size=args.batch_size,
             distributed=False,
             num_data_workers=args.num_workers,
             split=split,
             seed=42,
+            use_augmented=args.use_augmented,
+            date_ranges=date_ranges
         )
         
         print(f"Dataset size: {len(dataset)} samples")

@@ -96,6 +96,49 @@ def extract_timestamp_from_aia_processed(filename):
     return None
 
 
+def extract_date_from_flare_id(flare_id):
+    """
+    Extract date from flare_id.
+    Expected format: YYMMDDHHMMSS
+    Returns: datetime object or None
+    """
+    if len(flare_id) == 10:  # YYMMDDHHMMSS format
+        try:
+            year = 2000 + int(flare_id[:2])    # 21 -> 2021
+            month = int(flare_id[2:4])         # 05
+            day = int(flare_id[4:6])           # 22
+            hour = int(flare_id[6:8])          # 17
+            minute = int(flare_id[8:10])       # 10
+            
+            return datetime(year, month, day, hour, minute)
+        except (ValueError, IndexError):
+            return None
+    
+    return None
+
+
+def parse_date_string(date_str):
+    """
+    Parse YYMMDD or YYYYMMDD format date string to datetime.
+    Args:
+        date_str: Date string in YYMMDD or YYYYMMDD format
+    Returns:
+        datetime object
+    """
+    if len(date_str) == 6:  # YYMMDD
+        year = 2000 + int(date_str[:2])
+        month = int(date_str[2:4])
+        day = int(date_str[4:6])
+    elif len(date_str) == 8:  # YYYYMMDD
+        year = int(date_str[:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+    else:
+        raise ValueError(f"Invalid date format: {date_str}. Use YYMMDD or YYYYMMDD")
+    
+    return datetime(year, month, day)
+
+
 def parse_complex_visibility(complex_str):
     """
     Parse complex number string like '(0.62395840883255-0.14794765412807465j)' 
@@ -124,7 +167,9 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         split="train",
         transforms=True,
         seed=42,
-        transform_aia=None
+        transform_aia=None,
+        use_augmented=False,
+        date_ranges=None
     ):
         # path to dataset
         base_path = data_path
@@ -132,7 +177,7 @@ class AIA2STIXDataset(Dataset):  # type: ignore
 
         # path to visibilities
         vis_base_path = vis_path
-        self.vis_base_path = Path(vis_base_path)
+        self.vis_base_path = Path(vis_base_path) if vis_base_path is not None else None
 
         # Transformations
         self.are_transform = transforms
@@ -143,12 +188,22 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         self.test_perc = train_val_test[2]
         self.seed = seed
         self.split = split
+        self.use_augmented = use_augmented
+        self.date_ranges = date_ranges
         
-        # Load visibility data and create timestamp mapping
-        self.visibility_data = self._load_visibility_data()
+        # Check if this is an augmented dataset
+        self.is_augmented_dataset = self._detect_augmented_dataset()
         
-        # Get file paths and filter only those with matching visibility data
-        self.files_paths = self.get_filespaths()
+        if self.is_augmented_dataset:
+            print(f"Detected augmented dataset format at {self.base_path}")
+            # Load augmented data
+            self.augmented_metadata, self.files_paths = self._load_augmented_data()
+        else:
+            print(f"Using original dataset format at {self.base_path}")
+            # Load visibility data and create timestamp mapping
+            self.visibility_data = self._load_visibility_data()
+            # Get file paths and filter only those with matching visibility data
+            self.files_paths = self.get_filespaths()
 
     def _load_visibility_data(self):
         """Load visibility CSV and create timestamp-based lookup."""
@@ -176,6 +231,114 @@ class AIA2STIXDataset(Dataset):  # type: ignore
             vis_dict[flare_id] = np.array(visibilities, dtype=np.float32)  # Shape: (24, 2)
         
         return vis_dict
+    
+    def _detect_augmented_dataset(self):
+        """Detect if this is an augmented dataset by checking for expected structure."""
+        # Check for augmented dataset structure: images/ and visibilities/ subdirs
+        images_dir = self.base_path / "images"
+        vis_dir = self.base_path / "visibilities"
+        metadata_file = self.base_path / "augmented_metadata.csv"
+        
+        return (images_dir.exists() and 
+                vis_dir.exists() and 
+                metadata_file.exists())
+    
+    def _load_augmented_data(self):
+        """Load augmented dataset metadata and file paths."""
+        metadata_file = self.base_path / "augmented_metadata.csv"
+        metadata_df = pd.read_csv(metadata_file)
+        
+        # Filter metadata for current split if needed
+        # For augmented data, we'll use all data unless explicitly split
+        # You can modify this logic based on your needs
+        
+        # Get all image and visibility pairs
+        files_paths = []
+        for _, row in metadata_df.iterrows():
+            image_path = self.base_path / row['image_path']
+            vis_path = self.base_path / row['vis_path']
+            
+            if image_path.exists() and vis_path.exists():
+                files_paths.append({
+                    'image_path': image_path,
+                    'vis_path': vis_path,
+                    'sample_id': row['sample_id'],
+                    'flare_id': row['flare_id'],
+                    'aug_idx': row['aug_idx']
+                })
+        
+        # Apply date-based or percentage-based split
+        if self.date_ranges is not None:
+            # Date-based splitting
+            files_paths = self._apply_date_based_split(files_paths)
+        else:
+            # Original percentage-based splitting
+            # Shuffle deterministically for split
+            rng = random.Random(self.seed)
+            rng.shuffle(files_paths)
+            
+            # Apply train/val/test split
+            total_size = len(files_paths)
+            train_size = int(self.train_perc * total_size)
+            val_size = int(self.valid_perc * total_size)
+            
+            if self.split == 'train':
+                files_paths = files_paths[:train_size]
+            elif self.split == 'valid':
+                files_paths = files_paths[train_size:train_size + val_size]
+            elif self.split == 'test':
+                files_paths = files_paths[train_size + val_size:]
+        
+        return metadata_df, files_paths
+    
+    def _apply_date_based_split(self, files_paths):
+        """
+        Apply date-based splitting using date_ranges.
+        
+        Args:
+            files_paths: List of file info dictionaries (for augmented) or file paths (for original)
+            
+        Returns:
+            Filtered files_paths for the current split
+        """
+        if self.split not in self.date_ranges:
+            raise ValueError(f"Split '{self.split}' not found in date_ranges. Available: {list(self.date_ranges.keys())}")
+        
+        date_range = self.date_ranges[self.split]
+        start_date_str, end_date_str = date_range
+        
+        # Parse date strings to datetime objects
+        start_date = parse_date_string(start_date_str)
+        end_date = parse_date_string(end_date_str)
+        # Make end_date inclusive by setting it to end of day (23:59:59)
+        # end_date = end_date.replace(hour=23, minute=59, second=59)
+        
+        filtered_files = []
+        
+        for file_info in files_paths:
+            if isinstance(file_info, dict):
+                # Augmented dataset format
+                flare_id = file_info['flare_id']
+            else:
+                # Original dataset format
+                parts = file_info.stem.split('_')
+                if len(parts) >= 3:
+                    flare_id = parts[2]
+                else:
+                    continue
+            
+            # Extract date from flare_id
+            file_date = extract_date_from_flare_id(str(flare_id))
+            
+            if file_date is not None:
+                # Check if file date is within the range (inclusive)
+                if start_date <= file_date <= end_date:
+                    filtered_files.append(file_info)
+        
+        print(f"Date-based split '{self.split}': {start_date_str} to {end_date_str}")
+        print(f"  Found {len(filtered_files)} files out of {len(files_paths)} total")
+        
+        return filtered_files
 
     def get_filespaths(self):
         # Get all files in the base path
@@ -196,26 +359,32 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         # Sort the files
         valid_files.sort()
         
-        # Shuffle deterministically
-        rng = random.Random(self.seed)
-        rng.shuffle(valid_files)
+        # Apply date-based or percentage-based split
+        if self.date_ranges is not None:
+            # Date-based splitting
+            file_paths = self._apply_date_based_split(valid_files)
+        else:
+            # Original percentage-based splitting
+            # Shuffle deterministically
+            rng = random.Random(self.seed)
+            rng.shuffle(valid_files)
 
-        # Compute sizes
-        total_size = len(valid_files)
-        train_size = int(self.train_perc * total_size)
-        val_size = int(self.valid_perc * total_size)
-        test_size = total_size - train_size - val_size  # remainder
+            # Compute sizes
+            total_size = len(valid_files)
+            train_size = int(self.train_perc * total_size)
+            val_size = int(self.valid_perc * total_size)
+            test_size = total_size - train_size - val_size  # remainder
 
-        # Split the list
-        train_files = valid_files[:train_size]
-        val_files = valid_files[train_size:train_size + val_size]
-        test_files = valid_files[train_size + val_size:]
+            # Split the list
+            train_files = valid_files[:train_size]
+            val_files = valid_files[train_size:train_size + val_size]
+            test_files = valid_files[train_size + val_size:]
 
-        file_paths = {
-            'train': train_files,
-            'valid': val_files,
-            'test': test_files,
-        }[self.split]
+            file_paths = {
+                'train': train_files,
+                'valid': val_files,
+                'test': test_files,
+            }[self.split]
 
         return file_paths
     
@@ -223,19 +392,30 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         return len(self.files_paths)
 
     def __getitem__(self, idx):
-        # Load the data
-        file_path = self.files_paths[idx]
-        data = np.load(file_path, allow_pickle=True)
-        
-        # Extract flare_id from filename
-        parts = file_path.stem.split('_')
-        flare_id = parts[2]
-        
-        # Get corresponding visibility data
-        visibility_matrix = self.visibility_data[flare_id]  # Shape: (24, 2)
+        if self.is_augmented_dataset:
+            # Load augmented data
+            file_info = self.files_paths[idx]
+            
+            # Load image and visibility data
+            data = np.load(file_info['image_path'], allow_pickle=True)
+            visibility_matrix = np.load(file_info['vis_path'], allow_pickle=True)  # Shape: (24, 2)
+            
+        else:
+            # Load original data format
+            file_path = self.files_paths[idx]
+            data = np.load(file_path, allow_pickle=True)
+            
+            # Extract flare_id from filename
+            parts = file_path.stem.split('_')
+            flare_id = parts[2]
+            
+            # Get corresponding visibility data
+            visibility_matrix = self.visibility_data[flare_id]  # Shape: (24, 2)
 
+        # Normalize visibility data
         alpha_vis = get_alpha(visibility_matrix)  # Compute alpha value
         visibility_norm = visibility_matrix / alpha_vis if alpha_vis > 0 else visibility_matrix
+        
         # Convert to tensors
         data_tensor = torch.from_numpy(data).float()
         if data_tensor.ndim == 2:  # Add channel dimension if needed
@@ -276,16 +456,22 @@ def get_aia2stix_data_objects(
     vis_path=None,
     transforms=True,
     seed=42,
-    enc_data_path=None
+    enc_data_path=None,
+    use_augmented=False,
+    date_ranges=None
 ):
     """
     Create data loader for AIA2STIX dataset.
     
     Args:
-        data_path: Path to directory containing aia_processed_*.npy files
-        vis_path: Path to visibility CSV file
+        data_path: Path to directory containing aia_processed_*.npy files OR path to augmented dataset directory
+        vis_path: Path to visibility CSV file (ignored if using augmented dataset)
         enc_data_path: Path to encoded data directory. If None, returns standard dataset/dataloader.
                       If provided, appends 'train' or 'valid' based on split and returns original_data, visibilities, enc_data
+        use_augmented: If True, expect data_path to point to augmented dataset directory
+        date_ranges: Dictionary with date ranges for splits. Format:
+                    {'train': ('210520', '210630'), 'valid': ('210701', '210731'), 'test': ('210801', '210831')}
+                    Dates can be YYMMDD or YYYYMMDD format. If None, uses percentage-based splitting.
         Other args: Same as other data loader functions
     """
     
@@ -299,7 +485,9 @@ def get_aia2stix_data_objects(
             split=split,
             seed=seed,
             train_val_test=train_val_test,
-            transform_aia=transform_1600
+            transform_aia=transform_1600,
+            use_augmented=use_augmented,
+            date_ranges=date_ranges
         )
         
         # sampler
@@ -336,7 +524,9 @@ def get_aia2stix_data_objects(
             split=split,
             seed=seed,
             train_val_test=train_val_test,
-            transform_aia=transform_1600
+            transform_aia=transform_1600,
+            use_augmented=use_augmented,
+            date_ranges=date_ranges
         )
         
         # Determine encoded data path based on split
