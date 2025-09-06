@@ -13,7 +13,7 @@
 			"has_variance": false,             
 			"loss_config": "karras",
 			"masked": false,
-			"emb_features": 64,
+			"emb_features": 32,
 			"loss_weighting": "soft-min-snr",  
 			"dropout_rate": 0.05,              
 			"augment_wrapper": false,          
@@ -24,9 +24,9 @@
 			"sigma_sample_density": {
 				"type": "cosine-interpolated"},
 			
-			"hid_channels": 4,               
+			"hid_channels": 2,               
 			"hid_blocks": 1,                  
-			"ffn_factor": 2,                   
+			"ffn_factor": 1,                   
 			"attention_heads": 1,              
 			"qk_norm": true,                   
 			"rope": true,                      
