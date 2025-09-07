@@ -1,0 +1,43 @@
+# Configuration for Visibility Refiner Model with Composite Loss (Chi-Square Primary)
+seed: 42
+device: cuda
+epochs: 1000
+batch_size: 32
+train_split: 0.8
+num_workers: 4
+save_every: 10
+
+# Model configuration
+model:
+  input_dim: 48  # 24 * 2 (visibility dimensions)
+  hidden_dims: [512, 256, 128]  # Bigger model: 3 layers instead of 2
+  output_dim: 48  # Same as input_dim for residual learning
+  dropout_rate: 0.1
+  use_residual: true  # Use residual connections
+
+# Loss function configuration
+loss:
+  type: composite  # Options: 'chi_square', 'mse', 'composite'
+  primary_type: chi_square  # Primary loss type for composite: 'mse' or 'chi_square'
+  primary_weight: 1.0  # Weight for primary loss (MSE or chi-square)
+  real_imag_weight: 0.1  # Weight for real/imaginary MSE loss
+  epsilon: 1e-8  # Small value to prevent division by zero in chi-square loss
+
+# Optimizer configuration
+optimizer:
+  lr: 0.001
+  weight_decay: 1e-5
+
+# Learning rate scheduler
+scheduler:
+  factor: 0.5
+  patience: 10
+
+# Wandb logging (optional)
+use_wandb: false
+wandb:
+  project: aia2stix-refiner
+  name: visibility_refiner_composite_chisq_v1
+
+# Directory settings
+checkpoint_dir: ./checkpoints/refiner

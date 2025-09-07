@@ -11,9 +11,9 @@
 
 # Model Configuration
 model_type="diffusion"  # Options: "diffusion" or "encoder"
-model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/model_aia_2_stix_v1/model_00002800.pth"
+model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/model_aia_2_stix_very_very_small_v2/model_epoch_0995.pth"
 encoder_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/encoder_decoder_checkpoints_palette/checkpoint_epoch_115.pth"
-config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/3dmag.json"
+config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/very_very_small_model.json"
 
 # FCD Model
 fcd_model_path=""  # Leave empty to download from HuggingFace
@@ -27,7 +27,7 @@ enc_data_path="/mnt/nas05/astrodata01/aia_2_stix/encoded_data/"  # For diffusion
 
 # Evaluation Settings
 batch_size=16
-split="train"  # Options: "train", "valid", "test"
+split="valid"  # Options: "train", "valid", "test"
 num_batches=20
 output_dir="/mnt/nas05/data01/francesco/AIA2STIX/evaluation_results/${model_type}_checkpoint_$(basename $model_checkpoint .pth)_on_${split}"
 

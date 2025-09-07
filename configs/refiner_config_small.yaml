@@ -1,0 +1,40 @@
+# Small Configuration for Visibility Refiner Model
+seed: 42
+device: cuda
+epochs: 50
+batch_size: 512
+train_split: 0.8  # Only used when validation data is not provided separately
+num_workers: 4
+save_every: 5
+
+# Model configuration - smaller architecture
+model:
+  input_dim: 48  # 24 * 2 (visibility dimensions)
+  hidden_dims: [64, 32]  # Smaller hidden layers
+  output_dim: 48  # Same as input_dim for residual learning
+  dropout_rate: 0.05  # Less dropout for small model
+  use_residual: true  # Use residual connections
+
+# Loss function configuration
+loss:
+  type: chi_square  # Options: 'chi_square', 'mse'
+  epsilon: 1e-8  # Small value to prevent division by zero in chi-square loss
+
+# Optimizer configuration
+optimizer:
+  lr: 0.002  # Higher learning rate for smaller model
+  weight_decay: 1e-6
+
+# Learning rate scheduler
+scheduler:
+  factor: 0.7
+  patience: 8
+
+# Wandb logging (optional)
+use_wandb: false
+wandb:
+  project: aia2stix-refiner
+  name: visibility_refiner_small
+
+# Directory settings
+checkpoint_dir: ./checkpoints/refiner_small

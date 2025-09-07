@@ -338,6 +338,102 @@ class PaletteModelV2(nn.Module):
         return output
     
 
+class VisibilityRefiner(nn.Module):
+    def __init__(self, input_dim=48, hidden_dims=[128, 64], output_dim=48, dropout_rate=0.1, use_residual=True):
+        super().__init__()
+        
+        self.use_residual = use_residual
+        layers = []
+        
+        # Input layer
+        prev_dim = input_dim
+        for hidden_dim in hidden_dims:
+            layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout_rate)
+            ])
+            prev_dim = hidden_dim
+        
+        # Output layer (no activation for regression)
+        layers.append(nn.Linear(prev_dim, output_dim))
+        
+        self.network = nn.Sequential(*layers)
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x):
+        # x shape: (batch_size, visibility_dim) where visibility_dim = 24*2 = 48
+        refined = self.network(x)
+        
+        if self.use_residual:
+            # Add residual connection
+            return x + refined
+        else:
+            return refined
+
+class ChiSquareLoss(nn.Module):
+    def __init__(self, epsilon=1e-8):
+        super().__init__()
+        self.epsilon = epsilon
+    
+    def forward(self, predicted, target):
+        # Chi-square distance: sum((predicted - target)^2 / (target + epsilon))
+        # epsilon prevents division by zero for small values
+        chi_square = torch.sum((predicted - target) ** 2 / (torch.abs(target) + self.epsilon), dim=-1)
+        return torch.mean(chi_square)
+
+class CompositeLoss(nn.Module):
+    def __init__(self, primary_loss_type='mse', primary_weight=1.0, real_imag_weight=0.1, epsilon=1e-8):
+        """
+        Composite loss combining primary loss (MSE or chi-square) with separate MSE for real/imaginary parts.
+        
+        Args:
+            primary_loss_type: 'mse' or 'chi_square' for the primary loss
+            primary_weight: Weight for the primary loss function
+            real_imag_weight: Weight for the real/imaginary MSE loss
+            epsilon: Small value to prevent division by zero in chi-square loss
+        """
+        super().__init__()
+        self.primary_weight = primary_weight
+        self.real_imag_weight = real_imag_weight
+        
+        if primary_loss_type == 'mse':
+            self.primary_loss = nn.MSELoss()
+        elif primary_loss_type == 'chi_square':
+            self.primary_loss = ChiSquareLoss(epsilon=epsilon)
+        else:
+            raise ValueError(f"Unsupported primary loss type: {primary_loss_type}")
+        
+        self.real_imag_mse = nn.MSELoss()
+    
+    def forward(self, predicted, target):
+        # predicted and target shape: (batch_size, 48) where 48 = 24 * 2
+        
+        # Reshape to separate real and imaginary parts: (batch_size, 24, 2)
+        predicted_reshaped = predicted.view(-1, 24, 2)
+        target_reshaped = target.view(-1, 24, 2)
+        
+        # MSE loss on real parts (index 0)
+        real_loss = self.real_imag_mse(predicted_reshaped[:, :, 0], target_reshaped[:, :, 0])
+        
+        # MSE loss on imaginary parts (index 1)
+        imag_loss = self.real_imag_mse(predicted_reshaped[:, :, 1], target_reshaped[:, :, 1])
+        
+        # Combine real and imaginary MSE losses
+        real_imag_loss = (self.primary_weight * real_loss + self.real_imag_weight * imag_loss) / 2
+        
+        return real_imag_loss
+
 class PaletteModelV2_WithLatentBottleneck(nn.Module):
     def __init__(self, c_in=1, c_out=1, image_size=64, time_dim=256, device='cuda', latent=False, true_img_size=64, num_classes=None):
         super(PaletteModelV2_WithLatentBottleneck, self).__init__()
