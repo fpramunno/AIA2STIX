@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset, DistributedSampler, Sampler
 from typing import Iterator
 from datetime import datetime
 from collections.abc import Sized
+import json
 
 from src.utils import get_alpha, get_default_transforms
 
@@ -124,7 +125,8 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         split="train",
         transforms=True,
         seed=42,
-        transform_aia=None
+        transform_aia=None,
+        transform_vis=False
     ):
         # path to dataset
         base_path = data_path
@@ -137,6 +139,7 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         # Transformations
         self.are_transform = transforms
         self.transform_aia = transform_aia if transform_aia is not None else None
+        self.transform_vis = transform_vis 
 
         self.train_perc = train_val_test[0]
         self.valid_perc = train_val_test[1]
@@ -234,8 +237,14 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         # Get corresponding visibility data
         visibility_matrix = self.visibility_data[flare_id]  # Shape: (24, 2)
 
-        alpha_vis = get_alpha(visibility_matrix)  # Compute alpha value
-        visibility_norm = visibility_matrix / alpha_vis if alpha_vis > 0 else visibility_matrix
+        if self.transform_vis:
+            alpha_vis = get_alpha(visibility_matrix)  # Compute alpha value
+            visibility_norm = visibility_matrix / alpha_vis if alpha_vis > 0 else visibility_matrix
+            visibility_norm = visibility_norm / 2  # Scalet to [-1, 1]
+            visibility_tensor = torch.from_numpy(visibility_norm).float()  # Shape: (24, 2)
+        else:
+            visibility_tensor = torch.from_numpy(visibility_matrix).float()  # Shape: (24, 2)
+
         # Convert to tensors
         data_tensor = torch.from_numpy(data).float()
         if data_tensor.ndim == 2:  # Add channel dimension if needed
@@ -245,7 +254,7 @@ class AIA2STIXDataset(Dataset):  # type: ignore
         if self.are_transform:
             data_tensor = self.transform_aia(data_tensor) if self.transform_aia else data_tensor
         
-        visibility_tensor = torch.from_numpy(visibility_norm).float()  # Shape: (24, 2)
+        
         
         return data_tensor, visibility_tensor
 
@@ -255,14 +264,30 @@ class CombinedAIA2STIXDataset(Dataset):
         self.base_dataset = base_dataset
         self.encoded_data = encoded_data
         assert len(base_dataset) == len(encoded_data), f"Dataset length mismatch: {len(base_dataset)} vs {len(encoded_data)}"
-    
+
     def __len__(self):
         return len(self.base_dataset)
-    
+
     def __getitem__(self, idx):
         aia_data, vis_data = self.base_dataset[idx]
         enc_data = torch.from_numpy(self.encoded_data[idx]).float()
         return aia_data, vis_data, enc_data
+
+def normalize_encoded_data(enc_data_list, data_min, data_max):
+    """
+    Normalize encoded data to [-1, 1] range using provided min/max.
+
+    Args:
+        enc_data_list: List of encoded data arrays
+        data_min: Global minimum from training set
+        data_max: Global maximum from training set
+
+    Returns:
+        List of normalized arrays
+    """
+    all_data = np.stack(enc_data_list, axis=0)
+    all_data_norm = 2 * (all_data - data_min) / (data_max - data_min) - 1
+    return [all_data_norm[i] for i in range(len(all_data))]
 
 def get_aia2stix_data_objects(
     batch_size,
@@ -275,6 +300,7 @@ def get_aia2stix_data_objects(
     data_path=None,
     vis_path=None,
     transforms=True,
+    transform_vis=True,
     seed=42,
     enc_data_path=None
 ):
@@ -299,7 +325,8 @@ def get_aia2stix_data_objects(
             split=split,
             seed=seed,
             train_val_test=train_val_test,
-            transform_aia=transform_1600
+            transform_aia=transform_1600,
+            transform_vis=transform_vis
         )
         
         # sampler
@@ -336,7 +363,8 @@ def get_aia2stix_data_objects(
             split=split,
             seed=seed,
             train_val_test=train_val_test,
-            transform_aia=transform_1600
+            transform_aia=transform_1600,
+            transform_vis=transform_vis
         )
         
         # Determine encoded data path based on split
@@ -360,7 +388,19 @@ def get_aia2stix_data_objects(
         for file_path in enc_files:
             data = np.load(file_path).reshape(24, 2)
             enc_data_list.append(data)
-        
+
+        # Load normalization stats and apply normalization
+        norm_stats_path = '/mnt/nas05/data01/francesco/AIA2STIX/norm_stats_encoded.json'
+        with open(norm_stats_path, 'r') as f:
+            norm_stats = json.load(f)
+
+        # Apply normalization to [-1, 1]
+        enc_data_list = normalize_encoded_data(
+            enc_data_list,
+            norm_stats['min'],
+            norm_stats['max']
+        )
+
         dataset = CombinedAIA2STIXDataset(base_dataset, enc_data_list)
         
         # sampler
@@ -378,7 +418,7 @@ def get_aia2stix_data_objects(
             num_workers=num_data_workers,
             shuffle=False,  # shuffle determined by the sampler
             sampler=sampler,
-            drop_last=True,
+            drop_last=False,
             pin_memory=torch.cuda.is_available()
         )
 

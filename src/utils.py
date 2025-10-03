@@ -149,7 +149,7 @@ def create_circular_mask(h, w, center=None, radius=None):
 def get_alpha(vis_arr):
     # Compute alpha for a single vis array
     norm_vis = np.sqrt(np.square(vis_arr[:, 0]) + np.square(vis_arr[:, 1]))
-    alpha = (0.5) * np.max(norm_vis) # / (pix_size * pix_size)
+    alpha = (0.5) * np.max(norm_vis)  # / (pix_size * pix_size)
     return alpha
 
 def from_pil_image(x):
