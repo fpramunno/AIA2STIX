@@ -144,7 +144,7 @@ class FCDModelWrapper:
             visibilities = visibilities.detach().cpu().numpy()
             
         batch_size = visibilities.shape[0]
-        fcd_input = visibilities.reshape(batch_size, -1)  # (batch_size, 48)
+        fcd_input = 2*visibilities.reshape(batch_size, -1)  # (batch_size, 48)
         
         # Predict using FCD model
         reconstructed_images = self.model.predict(fcd_input, verbose=0)
@@ -589,11 +589,19 @@ def main():
         
         # Save numerical results
         results_file = output_dir / f'{args.model_type}_evaluation_results.npz'
+
+        # Concatenate batches into single arrays
+        pred_vis_all = np.concatenate(results['predicted_visibilities'], axis=0)
+        true_vis_all = np.concatenate(results['true_visibilities'], axis=0)
+        chi_sq_all = np.array(results['chi_square_distances'])
+
+        print(f"\nConcatenated shapes: pred={pred_vis_all.shape}, true={true_vis_all.shape}, chi_sq={chi_sq_all.shape}")
+
         np.savez(
             results_file,
-            chi_square_distances=results['chi_square_distances'],
-            predicted_visibilities=results['predicted_visibilities'],
-            true_visibilities=results['true_visibilities'],
+            chi_square_distances=chi_sq_all,
+            predicted_visibilities=pred_vis_all,
+            true_visibilities=true_vis_all,
         )
         print(f"Numerical results saved: {results_file}")
         

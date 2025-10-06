@@ -242,6 +242,18 @@ def main():
                                     warmup=sched_config['warmup'])
     elif sched_config['type'] == 'constant':
         sched = K.utils.ConstantLRWithWarmup(opt, warmup=sched_config['warmup'])
+    elif sched_config['type'] == 'plateau':
+        sched = optim.lr_scheduler.ReduceLROnPlateau(
+            opt,
+            mode=sched_config.get('mode', 'min'),
+            factor=sched_config.get('factor', 0.1),
+            patience=sched_config.get('patience', 10),
+            threshold=sched_config.get('threshold', 1e-4),
+            threshold_mode=sched_config.get('threshold_mode', 'rel'),
+            cooldown=sched_config.get('cooldown', 0),
+            min_lr=sched_config.get('min_lr', 0),
+            eps=sched_config.get('eps', 1e-8)
+        )
     else:
         raise ValueError('Invalid schedule type')
 
@@ -426,7 +438,9 @@ def main():
                     if accelerator.sync_gradients:
                         accelerator.clip_grad_norm_(model.parameters(), 1.)
                     opt.step()
-                    sched.step()
+                    # Only step scheduler if it's not ReduceLROnPlateau (plateau steps after validation)
+                    if not isinstance(sched, optim.lr_scheduler.ReduceLROnPlateau):
+                        sched.step()
                     opt.zero_grad()
 
                     # Track memory after optimizer step
@@ -495,6 +509,10 @@ def main():
             # Final averaging
             if accelerator.is_main_process:
                 val_loss /= len(val_dl)
+
+            # Step ReduceLROnPlateau scheduler with validation loss
+            if isinstance(sched, optim.lr_scheduler.ReduceLROnPlateau):
+                sched.step(val_loss)
 
             # Print validation loss
             if accelerator.is_main_process:

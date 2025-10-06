@@ -242,21 +242,23 @@ class AIA2STIXDataset(Dataset):  # type: ignore
             visibility_norm = visibility_matrix / alpha_vis if alpha_vis > 0 else visibility_matrix
             visibility_norm = visibility_norm / 2  # Scalet to [-1, 1]
             visibility_tensor = torch.from_numpy(visibility_norm).float()  # Shape: (24, 2)
+            alpha_tensor = torch.tensor(alpha_vis, dtype=torch.float32)  # Store alpha for denormalization
         else:
             visibility_tensor = torch.from_numpy(visibility_matrix).float()  # Shape: (24, 2)
+            alpha_tensor = torch.tensor(1.0, dtype=torch.float32)  # No normalization, alpha=1
 
         # Convert to tensors
         data_tensor = torch.from_numpy(data).float()
         if data_tensor.ndim == 2:  # Add channel dimension if needed
             data_tensor = data_tensor.unsqueeze(0)
-        
+
         # Apply transformations if any
         if self.are_transform:
             data_tensor = self.transform_aia(data_tensor) if self.transform_aia else data_tensor
-        
-        
-        
-        return data_tensor, visibility_tensor
+
+
+
+        return data_tensor, visibility_tensor, alpha_tensor
 
 # Create combined dataset
 class CombinedAIA2STIXDataset(Dataset):
@@ -269,9 +271,9 @@ class CombinedAIA2STIXDataset(Dataset):
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        aia_data, vis_data = self.base_dataset[idx]
+        aia_data, vis_data, alpha_data = self.base_dataset[idx]
         enc_data = torch.from_numpy(self.encoded_data[idx]).float()
-        return aia_data, vis_data, enc_data
+        return aia_data, vis_data, enc_data, alpha_data
 
 def normalize_encoded_data(enc_data_list, data_min, data_max):
     """

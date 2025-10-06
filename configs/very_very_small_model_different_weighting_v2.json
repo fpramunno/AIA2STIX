@@ -26,7 +26,7 @@
 			
 			"hid_channels": 16,          
 			"hid_blocks": 4,                  
-			"ffn_factor": 3,                   
+			"ffn_factor": 6,                   
 			"attention_heads": 4,              
 			"qk_norm": true,                   
 			"rope": true,                      
@@ -41,11 +41,11 @@
         "lr": 1e-4,
         "betas": [0.95, 0.999],
         "eps": 1e-6,
-        "weight_decay": 1e-3
+        "weight_decay": 1e-4
     },
     "lr_sched": {
         "type": "constant",
-        "warmup": 0.0
+        "warmup": 0.1
     },
     "ema_sched": {
         "type": "inverse",

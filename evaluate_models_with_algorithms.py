@@ -160,7 +160,7 @@ class FCDModelWrapper:
             visibilities = visibilities.detach().cpu().numpy()
             
         batch_size = visibilities.shape[0]
-        fcd_input = visibilities.reshape(batch_size, -1)  # (batch_size, 48)
+        fcd_input = 2*visibilities.reshape(batch_size, -1)  # (batch_size, 48)
         
         # Predict using FCD model
         reconstructed_images = self.model.predict(fcd_input, verbose=0)
@@ -264,24 +264,29 @@ class STIXAlgorithmsWrapper:
                 
         return MockVisibility(visibilities)
     
-    def predict_single_algorithm(self, visibilities, algorithm):
+    def predict_single_algorithm(self, visibilities, algorithm, alpha_values=None):
         """Predict using a single algorithm."""
         if isinstance(visibilities, torch.Tensor):
             visibilities = visibilities.detach().cpu().numpy()
-            
+
+        if isinstance(alpha_values, torch.Tensor):
+            alpha_values = alpha_values.detach().cpu().numpy()
+
         batch_size = visibilities.shape[0]
         results = []
-        
+
         for i in range(batch_size):
             vis_sample = visibilities[i]  # Shape: (24, 2)
-            
+
             # IMPORTANT: Denormalize visibilities for STIX algorithms
-            # The dataset normalizes by: vis_normalized = vis / alpha
-            # We need to reverse this: vis_original = vis_normalized * alpha
-            alpha = get_alpha(vis_sample)
-            if alpha > 0:
-                vis_denormalized = vis_sample * alpha
+            # The dataset normalizes by: vis_normalized = (vis / alpha) / 2
+            # We need to reverse this: vis_original = vis_normalized * 2 * alpha
+            if alpha_values is not None and alpha_values[i] > 0:
+                print(f'Alpha is: {alpha_values[i]}', flush=True)
+                alpha = alpha_values[i]
+                vis_denormalized = vis_sample * 2 * alpha
             else:
+                # Fallback if alpha not provided (shouldn't happen)
                 vis_denormalized = vis_sample
             
             if self.use_real_stix:
@@ -545,9 +550,12 @@ def evaluate_with_algorithms(model, model_ema, dataloader, device,
         # Get batch data
         aia_data = batch[0].contiguous().float().to(device)
         true_vis = batch[1].to(device).reshape(-1, 24, 2)
-        
+
         if model_type == 'diffusion':
             enc_vis = batch[2].to(device).reshape(-1, 1, 24, 2)
+            alpha_values = batch[3].to(device)  # Alpha values for denormalization
+        else:
+            alpha_values = batch[2].to(device)  # For encoder, alpha is at index 2
         
         with torch.no_grad():
             # Predict visibilities
@@ -578,9 +586,9 @@ def evaluate_with_algorithms(model, model_ema, dataloader, device,
                 try:
                     # Ground truth images
                     if hasattr(model_wrapper, 'predict_single_algorithm'):
-                        # STIX algorithm
-                        gt_images = model_wrapper.predict_single_algorithm(true_vis, alg_name.split('_')[-1])
-                        recon_images = model_wrapper.predict_single_algorithm(pred_vis, alg_name.split('_')[-1])
+                        # STIX algorithm - pass alpha values for denormalization
+                        gt_images = model_wrapper.predict_single_algorithm(true_vis, alg_name.split('_')[-1], alpha_values)
+                        recon_images = model_wrapper.predict_single_algorithm(pred_vis, alg_name.split('_')[-1], alpha_values)
                     else:
                         # FCD model
                         gt_images = model_wrapper.predict(true_vis)
@@ -886,7 +894,42 @@ def main():
     # Create comparison plots
     if results:
         create_algorithm_comparison_plots(results, str(output_dir), model_name, list(reconstruction_models.keys()))
-        
+
+        # Save numerical results
+        results_file = output_dir / f'{args.model_type}_algorithms_evaluation_results.npz'
+
+        # Concatenate batches into single arrays
+        pred_vis_all = np.concatenate(results['predicted_visibilities'], axis=0)
+        true_vis_all = np.concatenate(results['true_visibilities'], axis=0)
+        chi_sq_all = np.array(results['chi_square_distances'])
+        aia_images_all = np.concatenate(results['original_aia_images'], axis=0)
+
+        # Concatenate reconstructed images for each algorithm
+        recon_images_dict = {}
+        gt_images_dict = {}
+        for alg_name in reconstruction_models.keys():
+            recon_images_dict[f'reconstructed_{alg_name}'] = np.concatenate(results['reconstructed_images'][alg_name], axis=0)
+            gt_images_dict[f'ground_truth_{alg_name}'] = np.concatenate(results['ground_truth_images'][alg_name], axis=0)
+
+        print(f"\nSaving numerical results...")
+        print(f"  Predicted visibilities shape: {pred_vis_all.shape}")
+        print(f"  True visibilities shape: {true_vis_all.shape}")
+        print(f"  Chi-square distances shape: {chi_sq_all.shape}")
+        print(f"  AIA images shape: {aia_images_all.shape}")
+        for alg_name in reconstruction_models.keys():
+            print(f"  {alg_name} reconstructed images shape: {recon_images_dict[f'reconstructed_{alg_name}'].shape}")
+
+        np.savez(
+            results_file,
+            chi_square_distances=chi_sq_all,
+            predicted_visibilities=pred_vis_all,
+            true_visibilities=true_vis_all,
+            original_aia_images=aia_images_all,
+            **recon_images_dict,
+            **gt_images_dict
+        )
+        print(f"Numerical results saved: {results_file}")
+
         # Print summary
         print("\n" + "="*80)
         print("EVALUATION SUMMARY")

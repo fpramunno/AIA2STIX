@@ -4,16 +4,16 @@
 #SBATCH --time=4-00:00:00
 #SBATCH --partition=performance
 #SBATCH --job-name="evaluate_aia_2_stix_algorithms"
-#SBATCH --error=./logs/err/err_evaluate_aia_2_stix_algorithms.log
-#SBATCH --out=./logs/out/out_evaluate_aia_2_stix_algorithms.log
+#SBATCH --error=./logs/err/err_evaluate_aia_2_stix_algorithms_more_hchannels.log
+#SBATCH --out=./logs/out/out_evaluate_aia_2_stix_algorithms_more_hchannels.log
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
 # Model Configuration
 model_type="diffusion"  # Options: "diffusion" or "encoder"
-model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/model_aia_2_stix_very_very_small_v2/model_epoch_2990.pth"
+model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/model_aia_2_stix_more_h_channels/model_epoch_2990.pth"
 encoder_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/encoder_decoder_checkpoints_palette/checkpoint_epoch_115.pth"
-config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/very_very_small_model.json"
+config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/more_h_channels.json"
 
 # Algorithm Selection - Choose which reconstruction algorithms to use
 # Available options: fcd, clean, mem, em, back_projection
@@ -22,7 +22,7 @@ config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/very_very_sma
 #   algorithms="fcd clean mem"                 # FCD + selected STIX algorithms
 #   algorithms="clean mem em back_projection"  # All STIX algorithms
 #   algorithms="fcd clean mem em back_projection"  # All algorithms
-algorithms="fcd clean mem em"  # Default: FCD + 3 STIX algorithms
+algorithms="fcd clean mem"  # Default: FCD + 2 STIX algorithms
 
 # FCD Model Configuration
 fcd_model_path=""  # Leave empty to download from HuggingFace
@@ -40,7 +40,7 @@ split="valid"  # Options: "train", "valid", "test"
 
 # Create output directory with algorithm names
 algorithms_suffix=$(echo $algorithms | tr ' ' '_')
-output_dir="/mnt/nas05/data01/francesco/AIA2STIX/evaluation_results/${model_type}_$(basename $model_checkpoint .pth)_${algorithms_suffix}_${split}"
+output_dir="/mnt/nas05/data01/francesco/AIA2STIX/evaluation_results/${model_type}_$(basename $model_checkpoint .pth)_${algorithms_suffix}_${split}__more_hchannels"
 
 # Create directories
 mkdir -p "$output_dir"

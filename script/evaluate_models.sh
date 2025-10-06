@@ -4,16 +4,16 @@
 #SBATCH --time=4-00:00:00
 #SBATCH --partition=performance
 #SBATCH --job-name="evaluate_aia_2_stix_models"
-#SBATCH --error=./logs/err/err_evaluate_aia_2_stix_models.log
-#SBATCH --out=./logs/out/out_evaluate_aia_2_stix_models.log
+#SBATCH --error=./logs/err/err_evaluate_aia_2_stix_models_new_more_h_channels.log
+#SBATCH --out=./logs/out/out_evaluate_aia_2_stix_models_new_more_h_channels.log
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
 # Model Configuration
 model_type="diffusion"  # Options: "diffusion" or "encoder"
-model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/model_aia_2_stix_very_very_small_v2/model_epoch_2990.pth"
+model_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/model_aia_2_stix_more_h_channels/model_epoch_2990.pth"
 encoder_checkpoint="/mnt/nas05/data01/francesco/AIA2STIX/encoder_decoder_checkpoints_palette/checkpoint_epoch_115.pth"
-config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/very_very_small_model.json"
+config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/more_h_channels.json"
 
 # FCD Model
 fcd_model_path=""  # Leave empty to download from HuggingFace
@@ -29,7 +29,7 @@ enc_data_path="/mnt/nas05/astrodata01/aia_2_stix/encoded_data/"  # For diffusion
 batch_size=16
 split="valid"  # Options: "train", "valid", "test"
 num_batches=20
-output_dir="/mnt/nas05/data01/francesco/AIA2STIX/evaluation_results/${model_type}_checkpoint_$(basename $model_checkpoint .pth)_on_${split}"
+output_dir="/mnt/nas05/data01/francesco/AIA2STIX/evaluation_results/${model_type}_checkpoint_$(basename $model_checkpoint .pth)_on_${split}_model_aia_2_stix_more_h_channels"
 
 # Create directories
 mkdir -p "$output_dir"
