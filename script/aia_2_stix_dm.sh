@@ -4,9 +4,9 @@
 # SBATCH --nodelist=server0094
 #SBATCH --time=7-00:00:00
 #SBATCH --partition=performance
-#SBATCH --job-name="training_aia_2_stix_more_heads_ls_plateau"
-#SBATCH --error=./logs/err/err_training_aia_2_stix_more_heads_ls_plateau.log
-#SBATCH --out=./logs/out/out_training_aia_2_stix_more_heads_ls_plateau.log
+#SBATCH --job-name="training_aia_2_stix_more_heads_cooldown"
+#SBATCH --error=./logs/err/err_training_aia_2_stix_more_heads_cooldown.log
+#SBATCH --out=./logs/out/out_training_aia_2_stix_more_heads_cooldown.log
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
@@ -14,10 +14,10 @@ epochs=30000
 batch_size=128
 evaluate_every=5
 save_every=10
-config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/more_heads_ls_plateau.json"
+config_file="/mnt/nas05/data01/francesco/AIA2STIX/training/configs/3dmag_cooldown.json"
 saving_path="/mnt/nas05/data01/francesco/AIA2STIX/saved_models/"
-dir_name="aia_2_stix_more_heads_ls_plateau"
-wandb_run_name="aia_2_stix_more_heads_ls_plateau"
+dir_name="aia_2_stix_more_heads_cooldown"
+wandb_run_name="aia_2_stix_more_heads_cooldown"
 
 python /mnt/nas05/data01/francesco/AIA2STIX/training/train_3dmag.py --max-epochs $epochs \
     --batch-size $batch_size \

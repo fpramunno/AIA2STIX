@@ -400,6 +400,156 @@ class ConstantLRWithWarmup(optim.lr_scheduler._LRScheduler):
         return [warmup * base_lr for base_lr in self.base_lrs]
 
 
+class ConstantLRWithWarmupCooldown(optim.lr_scheduler._LRScheduler):
+    """Implements a constant learning rate schedule with warmup and cooldown phases.
+
+    This scheduler implements a trapezoidal learning rate schedule:
+    - Warmup: Linear increase from 0 to max LR over warmup_epochs
+    - Constant: Maintain max LR
+    - Cooldown: Decay to min_lr_ratio * max_lr over decay_epochs using specified decay function
+
+    The cooldown can be initiated automatically (if total_epochs is specified) or manually
+    by calling start_cooldown(). Automatic mode is recommended for most use cases.
+
+    Supported cooldown functions:
+    - 'linear': Linear decay
+    - 'cosine': Cosine decay
+    - 'sqrt': Square root decay
+    - '1-sqrt': (1 - sqrt) decay - typically outperforms linear (recommended)
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        warmup_epochs (int): Number of warmup epochs. Default: 0.
+        decay_epochs (int): Number of decay epochs for cooldown. Default: None (no cooldown).
+        total_epochs (int): Total number of training epochs. If specified, cooldown starts
+            automatically at epoch (total_epochs - decay_epochs). Default: None (manual mode).
+        cooldown_type (str): Type of cooldown decay function. Options: 'linear', 'cosine',
+            'sqrt', '1-sqrt'. Default: '1-sqrt'.
+        min_lr_ratio (float): Minimum learning rate as ratio of max LR (e.g., 0.1 for 10%). Default: 0.1.
+        last_epoch (int): The index of last epoch. Default: -1.
+        verbose (bool): If ``True``, prints a message to stdout for each update. Default: ``False``.
+
+    Example (automatic mode):
+        >>> optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        >>> # Cooldown automatically starts at epoch 24,000
+        >>> scheduler = ConstantLRWithWarmupCooldown(optimizer, warmup_epochs=1500,
+        ...                                          decay_epochs=6000, total_epochs=30000,
+        ...                                          cooldown_type='1-sqrt', min_lr_ratio=0.01)
+        >>> for epoch in range(30000):
+        ...     train(...)
+        ...     scheduler.step()
+
+    Example (manual mode):
+        >>> scheduler = ConstantLRWithWarmupCooldown(optimizer, warmup_epochs=10,
+        ...                                          decay_epochs=20, cooldown_type='1-sqrt')
+        >>> for epoch in range(epochs):
+        ...     train(...)
+        ...     scheduler.step()
+        ...     if should_stop_training:
+        ...         scheduler.start_cooldown()  # Manually initiate cooldown
+    """
+
+    def __init__(self, optimizer, warmup_epochs=0, decay_epochs=None, total_epochs=None,
+                 cooldown_type='1-sqrt', min_lr_ratio=0.1, last_epoch=-1, verbose=False):
+        self.warmup_epochs = warmup_epochs
+        self.decay_epochs = decay_epochs
+        self.total_epochs = total_epochs
+        self.cooldown_type = cooldown_type
+        self.min_lr_ratio = min_lr_ratio
+
+        # Cooldown state
+        self._cooldown_start_epoch = None  # Epoch when cooldown was initiated
+        self._in_cooldown = False
+
+        if cooldown_type not in ['linear', 'cosine', 'sqrt', '1-sqrt']:
+            raise ValueError(f"cooldown_type must be one of ['linear', 'cosine', 'sqrt', '1-sqrt'], got {cooldown_type}")
+
+        if not 0. <= min_lr_ratio <= 1.:
+            raise ValueError(f"min_lr_ratio must be between 0 and 1, got {min_lr_ratio}")
+
+        # Calculate automatic cooldown start epoch if total_epochs is specified
+        if total_epochs is not None and decay_epochs is not None:
+            self._auto_cooldown_epoch = total_epochs - decay_epochs
+        else:
+            self._auto_cooldown_epoch = None
+
+        super().__init__(optimizer, last_epoch)
+
+    def start_cooldown(self):
+        """Initiates the cooldown phase at the current epoch."""
+        if self.decay_epochs is None:
+            raise ValueError("Cannot start cooldown: decay_epochs was not specified")
+        if not self._in_cooldown:
+            self._cooldown_start_epoch = self.last_epoch
+            self._in_cooldown = True
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn("To get the last learning rate computed by the scheduler, "
+                          "please use `get_last_lr()`.")
+
+        return self._get_closed_form_lr()
+
+    def _get_closed_form_lr(self):
+        n = self.last_epoch
+
+        # Check if we should automatically start cooldown
+        if (self._auto_cooldown_epoch is not None and
+            n >= self._auto_cooldown_epoch and
+            not self._in_cooldown):
+            self._cooldown_start_epoch = self._auto_cooldown_epoch
+            self._in_cooldown = True
+
+        # Warmup phase
+        if n < self.warmup_epochs:
+            warmup_factor = n / max(1, self.warmup_epochs)
+            return [warmup_factor * base_lr for base_lr in self.base_lrs]
+
+        # Cooldown phase (if initiated)
+        if self._in_cooldown and self._cooldown_start_epoch is not None:
+            epochs_in_cooldown = n - self._cooldown_start_epoch
+            if epochs_in_cooldown >= self.decay_epochs:
+                # Cooldown complete - at min_lr_ratio * base_lr
+                return [self.min_lr_ratio * base_lr for base_lr in self.base_lrs]
+            else:
+                # Calculate decay factor
+                progress = epochs_in_cooldown / self.decay_epochs  # 0 to 1
+                decay_factor = self._compute_decay_factor(progress)
+                # Interpolate between 1.0 (max LR) and min_lr_ratio
+                final_factor = decay_factor * (1 - self.min_lr_ratio) + self.min_lr_ratio
+                return [final_factor * base_lr for base_lr in self.base_lrs]
+
+        # Constant phase
+        return list(self.base_lrs)
+
+    def _compute_decay_factor(self, progress):
+        """Compute the decay factor based on cooldown progress (0 to 1).
+
+        Returns a value from 1.0 (start of cooldown) to 0.0 (end of cooldown).
+        This will be scaled to go from 1.0 to min_lr_ratio.
+        """
+        if self.cooldown_type == 'linear':
+            return 1.0 - progress
+        elif self.cooldown_type == 'cosine':
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        elif self.cooldown_type == 'sqrt':
+            return (1.0 - progress) ** 0.5
+        elif self.cooldown_type == '1-sqrt':
+            # f(n,N,N_decay) = (1 - sqrt((n - (N - N_decay)) / N_decay))
+            return 1.0 - (progress ** 0.5)
+        else:
+            raise ValueError(f"Unknown cooldown_type: {self.cooldown_type}")
+
+    def state_dict(self):
+        """Returns the state of the scheduler as a dict."""
+        state = {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
+        return state
+
+    def load_state_dict(self, state_dict):
+        """Loads the scheduler state."""
+        self.__dict__.update(state_dict)
+
+
 def stratified_uniform(shape, group=0, groups=1, dtype=None, device=None):
     """Draws stratified samples from a uniform distribution."""
     if groups <= 0:

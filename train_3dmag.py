@@ -242,6 +242,15 @@ def main():
                                     warmup=sched_config['warmup'])
     elif sched_config['type'] == 'constant':
         sched = K.utils.ConstantLRWithWarmup(opt, warmup=sched_config['warmup'])
+    elif sched_config['type'] == 'constant_cooldown':
+        sched = K.utils.ConstantLRWithWarmupCooldown(
+            opt,
+            warmup_epochs=sched_config.get('warmup_epochs', 0),
+            decay_epochs=sched_config.get('decay_epochs', None),
+            total_epochs=args.max_epochs,  # Pass max_epochs for automatic cooldown
+            cooldown_type=sched_config.get('cooldown_type', '1-sqrt'),
+            min_lr_ratio=sched_config.get('min_lr_ratio', 0.1)
+        )
     elif sched_config['type'] == 'plateau':
         sched = optim.lr_scheduler.ReduceLROnPlateau(
             opt,
